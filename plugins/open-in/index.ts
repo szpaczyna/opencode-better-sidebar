@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { createSignal, For } from "solid-js"
+import { createSignal, For, Show } from "solid-js"
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { TextAttributes } from "@opentui/core"
 import { platform } from "node:os"
@@ -151,7 +151,7 @@ function IDEButton(props: {
         }
       }}
     >
-      [{props.ide.label}]
+      {props.ide.label}
     </text>
   )
 }
@@ -162,18 +162,26 @@ function View(props: { sessionID: string; resolveTarget: Resolver; notify: (mess
   const theme = () => context.theme
 
   return (
-    <box>
-      <text fg={theme().text.base} attributes={TextAttributes.BOLD}>Open In</text>
-      <box flexDirection="row" gap={1}>
-        <For each={installedIDEs()}>{(ide) => (
-          <IDEButton
-            sessionID={props.sessionID}
-            ide={ide}
-            resolveTarget={props.resolveTarget}
-            notify={props.notify}
-          />
+    <box flexDirection="row" gap={1}>
+      <Show
+        when={installedIDEs().length > 0}
+        fallback={<text fg={theme().text.muted}>Open in: no IDE detected</text>}
+      >
+        <text fg={theme().text.base} attributes={TextAttributes.BOLD}>Open in</text>
+        <For each={installedIDEs()}>{(ide, index) => (
+          <box flexDirection="row">
+            <Show when={index() > 0}>
+              <text fg={theme().text.muted}> · </text>
+            </Show>
+            <IDEButton
+              sessionID={props.sessionID}
+              ide={ide}
+              resolveTarget={props.resolveTarget}
+              notify={props.notify}
+            />
+          </box>
         )}</For>
-      </box>
+      </Show>
     </box>
   )
 }

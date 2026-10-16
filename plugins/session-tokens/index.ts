@@ -1,6 +1,10 @@
 /** @jsxImportSource @opentui/solid */
 import { createMemo, createSignal, For, onMount, Show } from "solid-js"
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
+import { createSectionIO } from "../_lib/section"
+
+let sectionOpen: () => boolean
+let toggleSection: () => void
 
 const MAX_MODEL_ROWS = 10
 const INT_FORMATTER = new Intl.NumberFormat("en-US")
@@ -55,9 +59,8 @@ function shortModelLabel(label: string): string {
   return `${label.slice(0, 25)}...`
 }
 
-function View(props: { sessionID: string }) {
+function View(props: { sessionID: string; open: () => boolean; toggle: () => void }) {
   const context = usePlugin()
-  const [open, setOpen] = createSignal(false)
   const theme = () => context.theme
 
   onMount(() => {
@@ -133,10 +136,8 @@ function View(props: { sessionID: string }) {
   return (
     <Show when={show()}>
       <box>
-        <box flexDirection="row" gap={1} onMouseDown={() => canExpand() && setOpen((x) => !x)}>
-          <Show when={canExpand()}>
-            <text fg={theme().text.base}>{open() ? "▼" : "▶"}</text>
-          </Show>
+        <box flexDirection="row" gap={1} onMouseDown={() => canExpand() && props.toggle()}>
+          <text fg={theme().text.base}>{props.open() ? "▼" : "▶"}</text>
           <text fg={theme().text.base}>
             <b>Session Tokens</b>
           </text>
@@ -146,7 +147,7 @@ function View(props: { sessionID: string }) {
           </Show>
         </box>
 
-        <Show when={canExpand() && open()}>
+        <Show when={canExpand() && props.open()}>
           <For each={data().perModel.slice(0, MAX_MODEL_ROWS)}>{(row) => (
             <box flexDirection="row">
               <text fg={theme().text.muted}>{shortModelLabel(row.model)}</text>
@@ -166,9 +167,20 @@ function View(props: { sessionID: string }) {
 export default Plugin.define({
   id: "streetturtle.session-tokens",
   setup(context) {
+    const io = createSectionIO(context, "session-tokens")
+    const [open, setOpen] = createSignal(io.initial)
+    sectionOpen = open
+    toggleSection = () => {
+      const next = !open()
+      setOpen(next)
+      io.save(next)
+    }
+
     return context.ui.slot({
       append: "sidebar.content",
-      render: (slot) => <View sessionID={slot.sessionID} />,
+      render: (slot) => (
+        <View sessionID={slot.sessionID} open={sectionOpen} toggle={toggleSection} />
+      ),
     })
   },
 })

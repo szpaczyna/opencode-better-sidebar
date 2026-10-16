@@ -2,6 +2,10 @@
 import { createEffect, createMemo, createSignal, onMount, Show } from "solid-js"
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { SyntaxStyle, TextAttributes } from "@opentui/core"
+import { createSectionIO } from "../_lib/section"
+
+let sectionOpen: () => boolean
+let toggleSection: () => void
 
 const PROMPTS_UNTIL_STALE = 3
 const RECENT_MESSAGES = 10
@@ -72,7 +76,7 @@ function buildSyntaxStyle(theme: any): SyntaxStyle {
   })
 }
 
-function View(props: { sessionID: string; onRecap: () => void }) {
+function View(props: { sessionID: string; onRecap: () => void; open: () => boolean; toggle: () => void }) {
   const context = usePlugin()
   const theme = () => context.theme
   const recap = () => getRecapSignal(props.sessionID)[0]()
@@ -102,19 +106,30 @@ function View(props: { sessionID: string; onRecap: () => void }) {
 
   return (
     <box>
-      <text
-        fg={theme().text.base}
-        attributes={TextAttributes.BOLD}
-        onMouseDown={() => { if (!loading()) props.onRecap() }}
-      >
-        {loading() ? "Generating..." : "Recap"}
-      </text>
-      <Show when={recap() !== null && !loading()}>
-        <markdown
-          content={recap()!}
-          syntaxStyle={syntaxStyle()}
-          fg={theme().text.muted}
-        />
+      <box flexDirection="row" gap={1}>
+        <text
+          fg={theme().text.base}
+          attributes={TextAttributes.BOLD}
+          onMouseDown={props.toggle}
+        >
+          {props.open() ? "▼" : "▶"}
+        </text>
+        <text
+          fg={theme().text.base}
+          attributes={TextAttributes.BOLD}
+          onMouseDown={() => { if (!loading()) props.onRecap() }}
+        >
+          {loading() ? "Generating..." : "Recap"}
+        </text>
+      </box>
+      <Show when={props.open()}>
+        <Show when={recap() !== null && !loading()}>
+          <markdown
+            content={recap()!}
+            syntaxStyle={syntaxStyle()}
+            fg={theme().text.muted}
+          />
+        </Show>
       </Show>
     </box>
   )
@@ -123,6 +138,15 @@ function View(props: { sessionID: string; onRecap: () => void }) {
 export default Plugin.define({
   id: "streetturtle.recap",
   setup(context) {
+    const io = createSectionIO(context, "recap")
+    const [open, setOpen] = createSignal(io.initial)
+    sectionOpen = open
+    toggleSection = () => {
+      const next = !open()
+      setOpen(next)
+      io.save(next)
+    }
+
     const options = context.options as RecapOptions | undefined
     let configuredModel: ModelChoice | undefined
     let optionsError: string | undefined
@@ -226,7 +250,12 @@ ${transcript}`
     return context.ui.slot({
       append: "sidebar.content",
       render: (slot) => (
-        <View sessionID={slot.sessionID} onRecap={() => generateRecap(slot.sessionID)} />
+        <View
+          sessionID={slot.sessionID}
+          onRecap={() => generateRecap(slot.sessionID)}
+          open={sectionOpen}
+          toggle={toggleSection}
+        />
       ),
     })
   },
