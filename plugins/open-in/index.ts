@@ -9,18 +9,25 @@ import { existsSync } from "node:fs"
 
 type IDEAction = {
   label: string
-  appName: string
+  /** macOS bundle name for applications that launch through `open -a`. */
+  appName?: string
+  /** Executable on PATH for terminal applications. */
   command?: string
+  /** Launch in a tmux window instead of the current terminal. */
+  tmux?: boolean
 }
 
 type IDEAvailability = "unknown" | "checking" | "available" | "missing"
 
 type Resolver = (sessionID: string) => Promise<string | undefined>
 
+const TMUX_WINDOW_NAME = "opencode-nvim"
+
 const IDES: IDEAction[] = [
   { label: "Zed", appName: "Zed", command: "zed" },
   { label: "VS Code", appName: "Visual Studio Code" },
   { label: "Cursor", appName: "Cursor" },
+  { label: "Neovim", command: "nvim", tmux: true },
 ]
 
 const busyBySession = new Map<string, ReturnType<typeof createSignal<boolean>>>()
@@ -31,51 +38,59 @@ function getBusySignal(sessionID: string) {
   return busyBySession.get(sessionID)!
 }
 
-function getAvailabilitySignal(appName: string) {
-  if (!availabilityByIDE.has(appName)) {
-    availabilityByIDE.set(appName, createSignal<IDEAvailability>("unknown"))
+function getAvailabilitySignal(key: string) {
+  if (!availabilityByIDE.has(key)) {
+    availabilityByIDE.set(key, createSignal<IDEAvailability>("unknown"))
   }
-  return availabilityByIDE.get(appName)!
+  return availabilityByIDE.get(key)!
 }
 
-function resolveZedCLIPath(): string | undefined {
-  const which = spawnSync("which", ["zed"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+function resolveCLIPath(command: string): string | undefined {
+  const which = spawnSync("which", [command], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
   const fromPath = which.status === 0 ? which.stdout.trim() : ""
   const candidates = [
     fromPath,
-    "/opt/homebrew/bin/zed",
-    "/usr/local/bin/zed",
+    `/opt/homebrew/bin/${command}`,
+    `/usr/local/bin/${command}`,
   ].filter(Boolean)
 
   return candidates.find((candidate) => existsSync(candidate))
 }
 
 function checkIDEInstalled(ide: IDEAction): boolean {
-  if (ide.command === "zed") {
-    return Boolean(resolveZedCLIPath())
+  // A tmux target is only usable when this process really runs inside tmux.
+  if (ide.tmux) {
+    return Boolean(process.env.TMUX) && Boolean(resolveCLIPath("tmux"))
   }
+
+  if (ide.command) {
+    return Boolean(resolveCLIPath(ide.command))
+  }
+
+  if (!ide.appName) return false
 
   const result = spawnSync("open", ["-Ra", ide.appName], { stdio: "ignore" })
   return result.status === 0
 }
 
-function refreshIDEAvailability() {
-  if (platform() !== "darwin") {
-    for (const ide of IDES) {
-      const [, setAvailability] = getAvailabilitySignal(ide.appName)
-      setAvailability("missing")
-    }
-    return
-  }
+function availabilityKey(ide: IDEAction): string {
+  return ide.label
+}
 
+function refreshIDEAvailability() {
   for (const ide of IDES) {
-    const [, setAvailability] = getAvailabilitySignal(ide.appName)
+    const [, setAvailability] = getAvailabilitySignal(availabilityKey(ide))
     setAvailability("checking")
   }
 
   for (const ide of IDES) {
-    const [, setAvailability] = getAvailabilitySignal(ide.appName)
-    setAvailability(checkIDEInstalled(ide) ? "available" : "missing")
+    // `open -a` is macOS-only, so GUI editors stay hidden elsewhere while tmux
+    // targets keep working.
+    if (platform() !== "darwin" && !ide.command) {
+      getAvailabilitySignal(availabilityKey(ide))[1]("missing")
+      continue
+    }
+    getAvailabilitySignal(availabilityKey(ide))[1](checkIDEInstalled(ide) ? "available" : "missing")
   }
 }
 
@@ -91,11 +106,11 @@ async function openInIDE(
   setBusy(true)
 
   try {
-    if (platform() !== "darwin") {
+    if (platform() !== "darwin" && !ide.command) {
       throw new Error("Open In currently supports macOS only")
     }
 
-    const [availability, setAvailability] = getAvailabilitySignal(ide.appName)
+    const [availability, setAvailability] = getAvailabilitySignal(availabilityKey(ide))
     if (availability() !== "available") {
       const installed = checkIDEInstalled(ide)
       setAvailability(installed ? "available" : "missing")
@@ -109,13 +124,26 @@ async function openInIDE(
       throw new Error("Could not resolve session directory")
     }
 
-    const launchResult = ide.command === "zed"
-      ? (() => {
-          const zed = resolveZedCLIPath()
-          if (!zed) throw new Error("Zed CLI not found")
-          return spawnSync(zed, [targetPath], { stdio: "ignore" })
-        })()
-      : spawnSync("open", ["-a", ide.appName, targetPath], { stdio: "ignore" })
+    const launchResult = (() => {
+      if (ide.tmux) {
+        // -A reuses the window when it is already open, so repeated clicks do
+        // not stack editors.
+        return spawnSync(
+          "tmux",
+          ["new-window", "-A", "-n", TMUX_WINDOW_NAME, "-c", targetPath, "nvim"],
+          { stdio: "ignore" },
+        )
+      }
+
+      if (ide.command) {
+        const cli = resolveCLIPath(ide.command)
+        if (!cli) throw new Error(`${ide.label} executable not found`)
+        return spawnSync(cli, [targetPath], { stdio: "ignore" })
+      }
+
+      if (!ide.appName) throw new Error("No launcher configured")
+      return spawnSync("open", ["-a", ide.appName, targetPath], { stdio: "ignore" })
+    })()
 
     if (launchResult.error) {
       throw launchResult.error
@@ -158,7 +186,7 @@ function IDEButton(props: {
 
 function View(props: { sessionID: string; resolveTarget: Resolver; notify: (message: string) => void }) {
   const context = usePlugin()
-  const installedIDEs = () => IDES.filter((ide) => getAvailabilitySignal(ide.appName)[0]() === "available")
+  const installedIDEs = () => IDES.filter((ide) => getAvailabilitySignal(availabilityKey(ide))[0]() === "available")
   const theme = () => context.theme
 
   return (
