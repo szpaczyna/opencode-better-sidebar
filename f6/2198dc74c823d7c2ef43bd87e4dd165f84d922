@@ -1,0 +1,27 @@
+plugins/open-in/index.ts
+  s_e686d2798e38cb::t_8fad2e00646301 127-146
+  s_e686d2798e38cb::t_698878004dd816 189
+  s_e686d2798e38cb::t_4169ed0bdab3d1 41-43,45
+  s_e686d2798e38cb::t_1ba0f1d047d5ac 76-78,80,82,87-93
+  s_e686d2798e38cb::t_4340dd61a770a3 113
+  s_e686d2798e38cb::t_fb73eb4c152d1f 12-14,16-17,24-25,30
+  s_e686d2798e38cb::t_1d72345ab799ce 109
+  s_e686d2798e38cb::t_bf6ab179cb6594 48-49,53-54,61-67,70
+  s_e686d2798e38cb::t_aa15e91881f5dd 71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f62198dc74c823d7c2ef43bd87e4dd165f84d922",
+  "prompts": {},
+  "sessions": {
+    "s_e686d2798e38cb": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_ebc4a258dffeovj4Y5krJtG1iY",
+        "model": "unknown"
+      },
+      "human_author": "Michal Laszuk <michal.laszuk@vonage.com>"
+    }
+  }
+}
