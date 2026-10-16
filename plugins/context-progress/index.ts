@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { createMemo, onMount } from "solid-js"
+import { createMemo, For, onMount } from "solid-js"
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { TextAttributes } from "@opentui/core"
 
@@ -33,13 +33,51 @@ function messageTokens(tokens: any): {
   return { input, output, reasoning, cacheRead, cacheWrite, total: input + output + reasoning + cacheRead + cacheWrite }
 }
 
-function buildBar(percent: number): { bar: string; clamped: number } {
+function buildBar(percent: number): { cells: { char: string; color?: string }[]; clamped: number } {
   const clamped = Math.max(0, Math.min(100, percent))
   const filled = Math.max(0, Math.min(BAR_WIDTH, Math.round((clamped / 100) * BAR_WIDTH)))
   return {
-    bar: `${"█".repeat(filled)}${"░".repeat(BAR_WIDTH - filled)}`,
+    cells: [
+      ...Array.from({ length: filled }, () => ({ char: "█" })),
+      ...Array.from({ length: BAR_WIDTH - filled }, () => ({ char: "░" })),
+    ],
     clamped,
   }
+}
+
+// Theme tokens are RGBA objects, not hex strings, so the gradient is computed
+// on their bytes and handed to the renderer as hex.
+type RGB = [number, number, number]
+
+function toRgb(color: unknown): RGB | undefined {
+  const buffer = (color as any)?.buffer
+  if (!buffer || buffer.length < 3) return undefined
+  return [Number(buffer[0]), Number(buffer[1]), Number(buffer[2])]
+}
+
+function toHex(rgb: RGB): string {
+  return `#${rgb.map((channel) => Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, "0")).join("")}`
+}
+
+function lighten(rgb: RGB, amount: number): RGB {
+  return [rgb[0] + (255 - rgb[0]) * amount, rgb[1] + (255 - rgb[1]) * amount, rgb[2] + (255 - rgb[2]) * amount]
+}
+
+function darken(rgb: RGB, amount: number): RGB {
+  return [rgb[0] * (1 - amount), rgb[1] * (1 - amount), rgb[2] * (1 - amount)]
+}
+
+/** Neovim insert-mode style vertical fade over the filled part of the bar. */
+function gradient(base: unknown, filled: number): string[] {
+  const rgb = toRgb(base)
+  if (!rgb || filled <= 0) return []
+
+  const top = lighten(rgb, 0.45)
+  const bottom = darken(rgb, 0.35)
+  return Array.from({ length: filled }, (_, index) => {
+    const t = filled === 1 ? 0.5 : index / (filled - 1)
+    return toHex([top[0] + (bottom[0] - top[0]) * t, top[1] + (bottom[1] - top[1]) * t, top[2] + (bottom[2] - top[2]) * t])
+  })
 }
 
 function View(props: { sessionID: string }) {
@@ -95,21 +133,34 @@ function View(props: { sessionID: string }) {
   const progress = createMemo(() => {
     const percent = usage().percent
     const bar = buildBar(percent)
-    const color =
+    const base =
       percent >= 90
         ? theme().text.feedback.error.base
         : percent >= 70
           ? theme().text.feedback.warning.base
           : theme().text.feedback.info.base
-    return { bar: bar.bar, color, percent: bar.clamped }
+
+    const colors = gradient(base, Math.min(BAR_WIDTH, Math.round((bar.clamped / 100) * BAR_WIDTH)))
+    const cells = bar.cells.map((cell, index) => ({
+      char: cell.char,
+      color: cell.char === "█" ? colors[index] : undefined,
+    }))
+
+    // The percentage follows the bottom of the gradient so the row stays cohesive.
+    const labelColor = colors.at(-1) ?? theme().text.base
+    return { cells, labelColor, percent: bar.clamped }
   })
 
   return (
     <box>
       <text fg={theme().text.base} attributes={TextAttributes.BOLD}>Context</text>
       <box flexDirection="row" gap={1}>
-        <text fg={progress().color}>{progress().bar}</text>
-        <text fg={progress().color}> {progress().percent}%</text>
+        <box flexDirection="row">
+          <For each={progress().cells}>{(cell) => (
+            <text fg={cell.color ?? theme().text.muted}>{cell.char}</text>
+          )}</For>
+        </box>
+        <text fg={progress().labelColor}> {progress().percent}%</text>
       </box>
       <text fg={theme().text.muted}>{detailLine()}</text>
     </box>

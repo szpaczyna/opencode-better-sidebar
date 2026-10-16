@@ -133,10 +133,12 @@ export default Plugin.define({
       optionsError = err?.message ?? String(err)
     }
 
-    const userPromptCount = async (sessionID: string) => {
-      const result = await context.client.session.message.list({ sessionID })
-      return (result.data ?? []).filter((message: any) => message?.type === "user").length
-    }
+    // The client exposes only message.get, so transcripts come from the data cache.
+    const cachedMessages = (sessionID: string) =>
+      (context.data.session.message.list(sessionID) ?? []) as any[]
+
+    const userPromptCount = (sessionID: string) =>
+      cachedMessages(sessionID).filter((message) => message?.type === "user").length
 
     async function generateRecap(sessionID: string) {
       const [, setRecap] = getRecapSignal(sessionID)
@@ -154,12 +156,7 @@ export default Plugin.define({
           throw new Error(optionsError)
         }
 
-        const recent = await context.client.session.message.list({
-          sessionID,
-          limit: RECENT_MESSAGES,
-          order: "desc",
-        })
-        const messages = (recent.data ?? []).slice().reverse()
+        const messages = cachedMessages(sessionID).slice(-RECENT_MESSAGES)
 
         const transcript = messages
           .map((message: any) => {
@@ -177,7 +174,7 @@ export default Plugin.define({
         const modelToUse = configuredModel ?? inferSessionModel(messages)
 
         const created = await context.client.session.create({})
-        recapSessionID = created.data?.id
+        recapSessionID = created?.id
         if (!recapSessionID) throw new Error("Failed to create recap session")
 
         if (modelToUse) {
@@ -203,14 +200,15 @@ ${transcript}`
           timeoutHandle = setTimeout(() => reject(new Error("Recap timed out")), GENERATE_TIMEOUT_MS)
         )
 
-        const generated = await Promise.race([
+        // The client unwraps single-key envelopes, so the text can sit either level.
+        const generated = (await Promise.race([
           context.client.session.generate({ sessionID: recapSessionID, prompt }),
           timeoutPromise,
-        ])
+        ])) as any
 
-        const recapText = (generated as any)?.data?.text?.trim()
+        const recapText = (generated?.text ?? generated?.data?.text)?.trim()
         setRecap(recapText || "*No summary generated.*")
-        promptBaselines.set(sessionID, await userPromptCount(sessionID))
+        promptBaselines.set(sessionID, userPromptCount(sessionID))
 
       } catch (err: any) {
         setRecap(`*Error: ${err?.message ?? String(err)}*`)

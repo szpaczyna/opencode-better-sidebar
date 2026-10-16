@@ -182,7 +182,8 @@ export default Plugin.define({
   id: "streetturtle.open-in",
   setup(context) {
     const resolveTarget: Resolver = async (sessionID) => {
-      const session = (await context.client.session.get({ sessionID })).data
+      // session.get resolves to the session itself, not an envelope.
+      const session = await context.client.session.get({ sessionID })
       const directory = session?.location?.directory?.trim()
       const subpath = session?.subpath?.trim()
       if (directory) return subpath ? resolve(directory, subpath) : directory
