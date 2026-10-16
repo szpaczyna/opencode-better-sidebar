@@ -8,16 +8,14 @@ One-click Markdown session recap in the OpenCode sidebar.
 
 <img src="https://raw.githubusercontent.com/streetturtle/opencode-better-sidebar/main/assets/recap-screenshot.png" alt="Recap sidebar screenshot" width="520" />
 
+## Requirements
+
+OpenCode 2.0 or newer (V2 plugin API).
+
 ## Install
 
 ```sh
-opencode plugin @streetturtle/opencode-recap
-```
-
-Global install:
-
-```sh
-opencode plugin --global @streetturtle/opencode-recap
+opencode plugin add @streetturtle/opencode-recap
 ```
 
 ## Usage
@@ -35,15 +33,19 @@ What the plugin does internally:
 
 By default, recap uses the session's most recent assistant model.
 
-You can override it by setting both `providerID` and `modelID` in `tui.json`:
+You can override it by setting both `providerID` and `modelID` in `opencode.json`
+(or `cli.json` for a CLI-only install):
 
 ```json
 {
-  "plugin": [
-    ["@streetturtle/opencode-recap", {
-      "providerID": "github-copilot",
-      "modelID": "gemini-3-flash-preview"
-    }]
+  "plugins": [
+    {
+      "package": "@streetturtle/opencode-recap",
+      "options": {
+        "providerID": "github-copilot",
+        "modelID": "gemini-3-flash-preview"
+      }
+    }
   ]
 }
 ```

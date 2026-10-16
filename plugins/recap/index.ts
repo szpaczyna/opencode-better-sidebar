@@ -1,16 +1,16 @@
 /** @jsxImportSource @opentui/solid */
-import { createSignal, Show } from "solid-js"
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import { createEffect, createMemo, createSignal, onMount, Show } from "solid-js"
+import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { SyntaxStyle, TextAttributes } from "@opentui/core"
 
 const PROMPTS_UNTIL_STALE = 3
 const RECENT_MESSAGES = 10
+const GENERATE_TIMEOUT_MS = 30_000
 
-// Module-level signals so the View component reacts to changes
 const recapSignals = new Map<string, ReturnType<typeof createSignal<string | null>>>()
 const loadingSignals = new Map<string, ReturnType<typeof createSignal<boolean>>>()
-// Counts user prompts sent after the last recap was generated
-const promptCounters = new Map<string, number>()
+// User prompt count at the moment of the last recap, per session
+const promptBaselines = new Map<string, number>()
 
 type RecapOptions = {
   providerID?: string
@@ -19,7 +19,7 @@ type RecapOptions = {
 
 type ModelChoice = {
   providerID: string
-  modelID: string
+  id: string
 }
 
 function readConfiguredModel(options: RecapOptions | undefined): ModelChoice | undefined {
@@ -35,27 +35,16 @@ function readConfiguredModel(options: RecapOptions | undefined): ModelChoice | u
 
   if (!hasProvider || !hasModel) return
 
-  return {
-    providerID: providerID!,
-    modelID: modelID!,
-  }
+  return { providerID: providerID!, id: modelID! }
 }
 
-function inferSessionModel(messages: any[]): ModelChoice | undefined {
-  const lastAssistant = [...messages]
-    .reverse()
-    .find((m: any) => {
-      const info = m?.info ?? m
-      const role = info?.role ?? m?.role
-      return role === "assistant" && typeof info?.providerID === "string" && typeof info?.modelID === "string"
-    })
-
-  const info = lastAssistant?.info ?? lastAssistant
-  const providerID = info?.providerID?.trim?.() ?? ""
-  const modelID = info?.modelID?.trim?.() ?? ""
-  if (!providerID || !modelID) return
-
-  return { providerID, modelID }
+function messageText(message: any): string {
+  if (typeof message?.text === "string") return message.text
+  return (message?.content ?? [])
+    .filter((part: any) => part?.type === "text")
+    .map((part: any) => part?.text ?? "")
+    .join("")
+    .trim()
 }
 
 function getRecapSignal(sessionID: string) {
@@ -68,31 +57,53 @@ function getLoadingSignal(sessionID: string) {
   return loadingSignals.get(sessionID)!
 }
 
-function buildSyntaxStyle(api: TuiPluginApi): SyntaxStyle {
-  const c = api.theme.current
+function buildSyntaxStyle(theme: any): SyntaxStyle {
+  const syntax = theme().syntax
   return SyntaxStyle.fromStyles({
-    comment:     { fg: c.syntaxComment },
-    keyword:     { fg: c.syntaxKeyword },
-    function:    { fg: c.syntaxFunction },
-    variable:    { fg: c.syntaxVariable },
-    string:      { fg: c.syntaxString },
-    number:      { fg: c.syntaxNumber },
-    type:        { fg: c.syntaxType },
-    operator:    { fg: c.syntaxOperator },
-    punctuation: { fg: c.syntaxPunctuation },
+    comment:     { fg: syntax.comment },
+    keyword:     { fg: syntax.keyword },
+    function:    { fg: syntax.function },
+    variable:    { fg: syntax.variable },
+    string:      { fg: syntax.string },
+    number:      { fg: syntax.number },
+    type:        { fg: syntax.type },
+    operator:    { fg: syntax.operator },
+    punctuation: { fg: syntax.punctuation },
   })
 }
 
-function View(props: { api: TuiPluginApi; session_id: string; onRecap: () => void }) {
-  const theme = () => props.api.theme.current
-  const recap = () => getRecapSignal(props.session_id)[0]()
-  const loading = () => getLoadingSignal(props.session_id)[0]()
-  const syntaxStyle = () => buildSyntaxStyle(props.api)
+function View(props: { sessionID: string; onRecap: () => void }) {
+  const context = usePlugin()
+  const theme = () => context.theme
+  const recap = () => getRecapSignal(props.sessionID)[0]()
+  const loading = () => getLoadingSignal(props.sessionID)[0]()
+  const syntaxStyle = () => buildSyntaxStyle(theme)
+
+  onMount(() => {
+    void context.data.session.message.sync(props.sessionID)
+  })
+
+  const userPrompts = createMemo(
+    () =>
+      (context.data.session.message.list(props.sessionID) ?? []).filter(
+        (message: any) => message?.type === "user",
+      ).length,
+  )
+
+  // A recap goes stale once enough new prompts arrived after it was generated.
+  createEffect(() => {
+    if (recap() === null) return
+    const baseline = promptBaselines.get(props.sessionID) ?? 0
+    if (userPrompts() - baseline < PROMPTS_UNTIL_STALE) return
+    const [, setRecap] = getRecapSignal(props.sessionID)
+    setRecap(null)
+    promptBaselines.set(props.sessionID, userPrompts())
+  })
 
   return (
     <box>
       <text
-        fg={theme().text}
+        fg={theme().text.base}
         attributes={TextAttributes.BOLD}
         onMouseDown={() => { if (!loading()) props.onRecap() }}
       >
@@ -102,91 +113,78 @@ function View(props: { api: TuiPluginApi; session_id: string; onRecap: () => voi
         <markdown
           content={recap()!}
           syntaxStyle={syntaxStyle()}
-          fg={theme().textMuted}
+          fg={theme().text.muted}
         />
       </Show>
     </box>
   )
 }
 
-const tui: TuiPlugin = async (api, options) => {
-  const { slots, client, event } = api
-  const recapOptions = options as RecapOptions | undefined
-  let configuredRecapModel: ModelChoice | undefined
-  let optionsError: string | undefined
-
-  try {
-    configuredRecapModel = readConfiguredModel(recapOptions)
-  } catch (err: any) {
-    optionsError = err?.message ?? String(err)
-  }
-
-  // Track user prompts per session and clear stale recaps
-  event.on("session.status", (e: any) => {
-    const sessionID: string = e.properties?.sessionID
-    if (!sessionID) return
-    const [recap] = getRecapSignal(sessionID)
-    if (recap() === null) return
-
-    if (e.properties?.status?.type === "busy") {
-      const count = (promptCounters.get(sessionID) ?? 0) + 1
-      promptCounters.set(sessionID, count)
-      if (count >= PROMPTS_UNTIL_STALE) {
-        const [, setRecap] = getRecapSignal(sessionID)
-        setRecap(null)
-        promptCounters.set(sessionID, 0)
-      }
-    }
-  })
-
-  async function generateRecap(sessionID: string) {
-    const [, setRecap] = getRecapSignal(sessionID)
-    const [, setLoading] = getLoadingSignal(sessionID)
-    let recapSessionID: string | undefined
-    let idleUnsub: (() => void) | undefined
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-
-    setLoading(true)
-
-    const [currentRecap] = getRecapSignal(sessionID)
-    const previousRecap = currentRecap()
+export default Plugin.define({
+  id: "streetturtle.recap",
+  setup(context) {
+    const options = context.options as RecapOptions | undefined
+    let configuredModel: ModelChoice | undefined
+    let optionsError: string | undefined
 
     try {
-      if (optionsError) {
-        throw new Error(optionsError)
-      }
+      configuredModel = readConfiguredModel(options)
+    } catch (err: any) {
+      optionsError = err?.message ?? String(err)
+    }
 
-      // Fetch only the most recent messages
-      const messagesResult = await client.session.messages({ sessionID })
-      const messages = (messagesResult.data ?? []).slice(-RECENT_MESSAGES)
+    const userPromptCount = async (sessionID: string) => {
+      const result = await context.client.session.message.list({ sessionID })
+      return (result.data ?? []).filter((message: any) => message?.type === "user").length
+    }
 
-      const transcript = messages
-        .map((m: any) => {
-          const role = m.info?.role ?? "unknown"
-          const text = (m.parts ?? [])
-            .filter((p: any) => p.type === "text")
-            .map((p: any) => p.text ?? "")
-            .join(" ")
-            .trim()
-          return text ? `${role}: ${text}` : null
+    async function generateRecap(sessionID: string) {
+      const [, setRecap] = getRecapSignal(sessionID)
+      const [, setLoading] = getLoadingSignal(sessionID)
+      let recapSessionID: string | undefined
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+
+      setLoading(true)
+
+      const [currentRecap] = getRecapSignal(sessionID)
+      const previousRecap = currentRecap()
+
+      try {
+        if (optionsError) {
+          throw new Error(optionsError)
+        }
+
+        const recent = await context.client.session.message.list({
+          sessionID,
+          limit: RECENT_MESSAGES,
+          order: "desc",
         })
-        .filter(Boolean)
-        .join("\n\n")
+        const messages = (recent.data ?? []).slice().reverse()
 
-      if (!transcript) {
-        setRecap("*Nothing to summarize yet.*")
-        return
-      }
+        const transcript = messages
+          .map((message: any) => {
+            const text = messageText(message)
+            return text ? `${message.type}: ${text}` : null
+          })
+          .filter(Boolean)
+          .join("\n\n")
 
-      const modelToUse = configuredRecapModel ?? inferSessionModel(messages)
+        if (!transcript) {
+          setRecap("*Nothing to summarize yet.*")
+          return
+        }
 
-      // Create a throwaway session for the LLM call.
-      // Model selection is applied on session.prompt via `model`, not session.create.
-      const newSession = await client.session.create({})
-      recapSessionID = newSession.data?.id
-      if (!recapSessionID) throw new Error("Failed to create recap session")
+        const modelToUse = configuredModel ?? inferSessionModel(messages)
 
-      const prompt = `You are a summarization assistant. Output only Markdown - no tools, no files, no questions.
+        const created = await context.client.session.create({})
+        recapSessionID = created.data?.id
+        if (!recapSessionID) throw new Error("Failed to create recap session")
+
+        if (modelToUse) {
+          await context.client.session.switchModel({ sessionID: recapSessionID, model: modelToUse })
+        }
+
+        const prompt = `You are a summarization assistant. Output only Markdown - no tools, no files, no questions.
 Do not use Markdown tables.
 
 Summarize this coding session in ~40 words across these sections:
@@ -201,91 +199,49 @@ ${previousRecap ? `\nPREVIOUS RECAP (context for earlier history):\n${previousRe
 RECENT TRANSCRIPT (last ${RECENT_MESSAGES} messages):
 ${transcript}`
 
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        timeoutHandle = setTimeout(() => reject(new Error("Recap timed out")), 30_000)
-      )
-
-      // session.prompt fires the request; wait for session to go idle, then fetch messages
-      const idlePromise = new Promise<void>((resolve) => {
-        idleUnsub = api.event.on("session.idle", (e: any) => {
-          if (e.properties?.sessionID === recapSessionID) {
-            idleUnsub?.()
-            idleUnsub = undefined
-            resolve()
-          }
-        })
-      })
-
-      await client.session.prompt({
-        sessionID: recapSessionID,
-        ...(modelToUse ? { model: modelToUse } : {}),
-        parts: [{ type: "text", text: prompt }],
-      })
-
-      await Promise.race([idlePromise, timeoutPromise])
-
-      // Fetch completed messages to get the assistant's reply
-      const recapMessages = await client.session.messages({ sessionID: recapSessionID })
-      const allMessages = recapMessages.data ?? []
-
-      const lastAssistantMsg = [...allMessages]
-        .reverse()
-        .find((m: any) => {
-          const role = m.info?.role ?? m.role
-          if (role !== "assistant") return false
-          // Exclude messages that contain the prompt we sent (echoed back as assistant)
-          const text = (m.parts ?? [])
-            .filter((p: any) => p.type === "text")
-            .map((p: any) => p.text ?? "")
-            .join("")
-          return !text.includes("You are a summarization assistant")
-        })
-
-      const recapText = (lastAssistantMsg?.parts ?? [])
-        .filter((p: any) => p.type === "text")
-        .map((p: any) => p.text ?? "")
-        .join("")
-        .trim()
-
-      setRecap(recapText || "*No summary generated.*")
-      promptCounters.set(sessionID, 0)
-
-    } catch (err: any) {
-      setRecap(`*Error: ${err?.message ?? String(err)}*`)
-    } finally {
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle)
-      }
-      if (idleUnsub) {
-        idleUnsub()
-        idleUnsub = undefined
-      }
-      if (recapSessionID) {
-        await client.session.delete({ sessionID: recapSessionID }).catch(() => {})
-      }
-      setLoading(false)
-    }
-  }
-
-  slots.register({
-    order: 300,
-    slots: {
-      sidebar_content(_ctx, props) {
-        return (
-          <View
-            api={api}
-            session_id={props.session_id}
-            onRecap={() => generateRecap(props.session_id)}
-          />
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          timeoutHandle = setTimeout(() => reject(new Error("Recap timed out")), GENERATE_TIMEOUT_MS)
         )
-      },
-    },
-  })
-}
 
-const plugin: TuiPluginModule & { id: string } = {
-  id: "streetturtle.recap",
-  tui,
-}
+        const generated = await Promise.race([
+          context.client.session.generate({ sessionID: recapSessionID, prompt }),
+          timeoutPromise,
+        ])
 
-export default plugin
+        const recapText = (generated as any)?.data?.text?.trim()
+        setRecap(recapText || "*No summary generated.*")
+        promptBaselines.set(sessionID, await userPromptCount(sessionID))
+
+      } catch (err: any) {
+        setRecap(`*Error: ${err?.message ?? String(err)}*`)
+      } finally {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle)
+        }
+        if (recapSessionID) {
+          await context.client.session.remove({ sessionID: recapSessionID }).catch(() => {})
+        }
+        setLoading(false)
+      }
+    }
+
+    return context.ui.slot({
+      append: "sidebar.content",
+      render: (slot) => (
+        <View sessionID={slot.sessionID} onRecap={() => generateRecap(slot.sessionID)} />
+      ),
+    })
+  },
+})
+
+function inferSessionModel(messages: any[]): ModelChoice | undefined {
+  const lastAssistant = [...messages]
+    .reverse()
+    .find((message: any) => message?.type === "assistant" && message?.model?.providerID && message?.model?.id)
+
+  const providerID = lastAssistant?.model?.providerID?.trim?.() ?? ""
+  const modelID = lastAssistant?.model?.id?.trim?.() ?? ""
+  if (!providerID || !modelID) return
+
+  return { providerID, id: modelID }
+}

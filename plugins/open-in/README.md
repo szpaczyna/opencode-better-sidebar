@@ -10,10 +10,14 @@ OpenCode sidebar plugin with one-click IDE launch buttons for the current sessio
 - Shows buttons for installed IDEs only (Zed, VS Code, Cursor)
 - Opens the active session directory directly in your IDE
 
+## Requirements
+
+OpenCode 2.0 or newer (V2 plugin API).
+
 ## Install
 
 ```sh
-opencode plugin --global @streetturtle/opencode-open-in
+opencode plugin add @streetturtle/opencode-open-in
 ```
 
 ## Usage

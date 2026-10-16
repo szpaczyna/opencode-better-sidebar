@@ -19,14 +19,18 @@ Compact context usage widget for the OpenCode sidebar.
   - warning: `>= 70%`
   - danger: `>= 90%`
 
+The widget is appended to the built-in `sidebar.content` slot, so it never
+replaces sidebar content contributed by OpenCode or other plugins.
+
+## Requirements
+
+OpenCode 2.0 or newer. This plugin uses the V2 plugin API
+(`@opencode/plugin/tui`) and does not run on OpenCode 1.x.
+
 ## Install
 
 ```sh
-opencode plugin @streetturtle/opencode-context-progress
+opencode plugin add @streetturtle/opencode-context-progress
 ```
 
-Global install:
-
-```sh
-opencode plugin --global @streetturtle/opencode-context-progress
-```
+Or from OpenCode, press <kbd>ctrl</kbd>+<kbd>p</kbd> -> "Install Plugin" -> "@streetturtle/opencode-context-progress"

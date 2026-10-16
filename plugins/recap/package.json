@@ -1,6 +1,6 @@
 {
   "name": "@streetturtle/opencode-recap",
-  "version": "1.0.5",
+  "version": "2.0.0",
   "description": "OpenCode TUI plugin - AI session recap in the sidebar",
   "repository": {
     "type": "git",
@@ -13,6 +13,7 @@
   },
   "type": "module",
   "exports": {
+    ".": "./dist/index.ts",
     "./tui": "./dist/tui.tsx"
   },
   "files": [
@@ -21,7 +22,7 @@
     "recap.png"
   ],
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist && cp index.ts dist/tui.tsx",
+    "build": "rm -rf dist && mkdir -p dist && cp index.ts dist/tui.tsx && cp server.ts dist/index.ts",
     "pack:dry": "npm pack --dry-run",
     "prepublishOnly": "npm run build"
   },
@@ -33,12 +34,14 @@
   ],
   "license": "MIT",
   "engines": {
-    "opencode": ">=1.4.3"
+    "opencode": ">=2.0.0"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.4.3",
-    "@opentui/core": "^0.4.2",
-    "@opentui/solid": "^0.4.2",
-    "solid-js": "^1.9.12"
+    "@opencode/plugin": "^2.0.0"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.8",
+    "@opentui/solid": ">=0.5.8",
+    "solid-js": ">=1.9.0"
   }
 }

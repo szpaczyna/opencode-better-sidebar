@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { createSignal, For } from "solid-js"
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { TextAttributes } from "@opentui/core"
 import { platform } from "node:os"
 import { spawnSync } from "node:child_process"
@@ -14,6 +14,8 @@ type IDEAction = {
 }
 
 type IDEAvailability = "unknown" | "checking" | "available" | "missing"
+
+type Resolver = (sessionID: string) => Promise<string | undefined>
 
 const IDES: IDEAction[] = [
   { label: "Zed", appName: "Zed", command: "zed" },
@@ -77,7 +79,12 @@ function refreshIDEAvailability() {
   }
 }
 
-async function openInIDE(api: TuiPluginApi, sessionID: string, ide: IDEAction) {
+async function openInIDE(
+  sessionID: string,
+  ide: IDEAction,
+  resolveTarget: Resolver,
+  notify: (message: string) => void,
+) {
   const [busy, setBusy] = getBusySignal(sessionID)
   if (busy()) return
 
@@ -97,17 +104,7 @@ async function openInIDE(api: TuiPluginApi, sessionID: string, ide: IDEAction) {
       }
     }
 
-    const stateDirectory = api.state.path.directory?.trim()
-    const session = await api.client.session.get({ sessionID })
-    const info = session.data
-    const rawPath = info?.path?.trim()
-    const sessionDirectory = info?.directory?.trim()
-
-    const targetPath = stateDirectory
-      ?? (rawPath
-        ? (isAbsolute(rawPath) ? rawPath : resolve(sessionDirectory ?? ".", rawPath))
-        : sessionDirectory)
-
+    const targetPath = await resolveTarget(sessionID)
     if (!targetPath) {
       throw new Error("Could not resolve session directory")
     }
@@ -127,32 +124,30 @@ async function openInIDE(api: TuiPluginApi, sessionID: string, ide: IDEAction) {
       throw new Error(`Failed to open in ${ide.label}`)
     }
   } catch (err: any) {
-    const text = err?.message ?? String(err)
-    api.ui.toast({
-      variant: "error",
-      message: `Open In: ${text}`,
-    })
+    notify(err?.message ?? String(err))
   } finally {
     setBusy(false)
   }
 }
 
 function IDEButton(props: {
-  api: TuiPluginApi
   sessionID: string
   ide: IDEAction
+  resolveTarget: Resolver
+  notify: (message: string) => void
 }) {
+  const context = usePlugin()
   const [busy] = getBusySignal(props.sessionID)
-  const theme = () => props.api.theme.current
+  const theme = () => context.theme
   const disabled = () => busy()
 
   return (
     <text
-      fg={disabled() ? theme().textMuted : theme().text}
+      fg={disabled() ? theme().text.muted : theme().text.base}
       attributes={TextAttributes.BOLD}
       onMouseDown={() => {
         if (!disabled()) {
-          void openInIDE(props.api, props.sessionID, props.ide)
+          void openInIDE(props.sessionID, props.ide, props.resolveTarget, props.notify)
         }
       }}
     >
@@ -161,43 +156,50 @@ function IDEButton(props: {
   )
 }
 
-function View(props: {
-  api: TuiPluginApi
-  sessionID: string
-}) {
+function View(props: { sessionID: string; resolveTarget: Resolver; notify: (message: string) => void }) {
+  const context = usePlugin()
   const installedIDEs = () => IDES.filter((ide) => getAvailabilitySignal(ide.appName)[0]() === "available")
-  const theme = () => props.api.theme.current
+  const theme = () => context.theme
 
   return (
     <box>
-      <text fg={theme().text} attributes={TextAttributes.BOLD}>Open In</text>
+      <text fg={theme().text.base} attributes={TextAttributes.BOLD}>Open In</text>
       <box flexDirection="row" gap={1}>
         <For each={installedIDEs()}>{(ide) => (
-          <IDEButton api={props.api} sessionID={props.sessionID} ide={ide} />
+          <IDEButton
+            sessionID={props.sessionID}
+            ide={ide}
+            resolveTarget={props.resolveTarget}
+            notify={props.notify}
+          />
         )}</For>
       </box>
     </box>
   )
 }
 
-const tui: TuiPlugin = async (api) => {
-  const { slots } = api
-
-  refreshIDEAvailability()
-
-  slots.register({
-    order: 290,
-    slots: {
-      sidebar_content(_ctx, props) {
-        return <View api={api} sessionID={props.session_id} />
-      },
-    },
-  })
-}
-
-const plugin: TuiPluginModule & { id: string } = {
+export default Plugin.define({
   id: "streetturtle.open-in",
-  tui,
-}
+  setup(context) {
+    const resolveTarget: Resolver = async (sessionID) => {
+      const session = (await context.client.session.get({ sessionID })).data
+      const directory = session?.location?.directory?.trim()
+      const subpath = session?.subpath?.trim()
+      if (directory) return subpath ? resolve(directory, subpath) : directory
+      return subpath && isAbsolute(subpath) ? subpath : undefined
+    }
 
-export default plugin
+    refreshIDEAvailability()
+
+    const notify = (message: string) => {
+      void context.ui.toast.show({ variant: "error", message: `Open In: ${message}` })
+    }
+
+    return context.ui.slot({
+      append: "sidebar.content",
+      render: (slot) => (
+        <View sessionID={slot.sessionID} resolveTarget={resolveTarget} notify={notify} />
+      ),
+    })
+  },
+})
