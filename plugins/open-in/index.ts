@@ -94,6 +94,36 @@ function refreshIDEAvailability() {
   }
 }
 
+function spawnTmux(args: string[]) {
+  return spawnSync("tmux", args, {
+    encoding: "utf8",
+    timeout: 5_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+}
+
+/**
+ * tmux 3.8 has no -A flag for new-window, so an existing editor window is
+ * reused and repointed instead of being duplicated.
+ */
+function launchInTmux(targetPath: string) {
+  const windows = spawnTmux(["list-windows", "-F", "#{window_name}"])
+  const exists = (windows.stdout ?? "")
+    .split("\n")
+    .some((name) => name.trim() === TMUX_WINDOW_NAME)
+
+  if (exists) {
+    const escaped = targetPath.replace(/ /g, "\\ ")
+    spawnTmux(["send-keys", "-t", TMUX_WINDOW_NAME, `:cd ${escaped}`, "Enter"])
+    return spawnTmux(["select-window", "-t", TMUX_WINDOW_NAME])
+  }
+
+  const created = spawnTmux(["new-window", "-d", "-n", TMUX_WINDOW_NAME, "-c", targetPath, "nvim"])
+  if ((created.status ?? 1) !== 0) return created
+
+  return spawnTmux(["select-window", "-t", TMUX_WINDOW_NAME])
+}
+
 async function openInIDE(
   sessionID: string,
   ide: IDEAction,
@@ -126,13 +156,7 @@ async function openInIDE(
 
     const launchResult = (() => {
       if (ide.tmux) {
-        // -A reuses the window when it is already open, so repeated clicks do
-        // not stack editors.
-        return spawnSync(
-          "tmux",
-          ["new-window", "-A", "-n", TMUX_WINDOW_NAME, "-c", targetPath, "nvim"],
-          { stdio: "ignore" },
-        )
+        return launchInTmux(targetPath)
       }
 
       if (ide.command) {
@@ -149,7 +173,8 @@ async function openInIDE(
       throw launchResult.error
     }
     if ((launchResult.status ?? 1) !== 0) {
-      throw new Error(`Failed to open in ${ide.label}`)
+      const detail = (launchResult.stderr ?? "").trim().split("\n")[0]
+      throw new Error(`Failed to open in ${ide.label}${detail ? `: ${detail}` : ""}`)
     }
   } catch (err: any) {
     notify(err?.message ?? String(err))
