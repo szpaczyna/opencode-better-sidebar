@@ -8,15 +8,15 @@ One-click Markdown session recap in the OpenCode sidebar.
 
 <img src="https://raw.githubusercontent.com/streetturtle/opencode-better-sidebar/main/assets/recap-screenshot.png" alt="Recap sidebar screenshot" width="520" />
 
-## Requirements
-
-OpenCode 2.0 or newer (V2 plugin API).
-
 ## Install
+
+Requires OpenCode 2.0 or newer.
 
 ```sh
 opencode plugin add @streetturtle/opencode-recap
 ```
+
+Project-only: add `"@streetturtle/opencode-recap"` to `plugins` in `opencode.jsonc`.
 
 ## Usage
 
@@ -26,15 +26,13 @@ What the plugin does internally:
 
 - Uses the most recent 10 messages as recap context
 - Reuses previous recap output for continuity
-- Creates a short-lived throwaway session for generation
-- Deletes the throwaway session after completion
+- Generates the recap with a one-off text generation request (no extra session is created)
 
 ## Model selection
 
 By default, recap uses the session's most recent assistant model.
 
-You can override it by setting both `providerID` and `modelID` in `opencode.json`
-(or `cli.json` for a CLI-only install):
+You can override it by setting both `providerID` and `modelID` in the plugin options in `opencode.jsonc`:
 
 ```json
 {

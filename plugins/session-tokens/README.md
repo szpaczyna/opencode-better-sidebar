@@ -21,12 +21,12 @@ OpenCode sidebar plugin for quick session token visibility.
 - Counts assistant messages with token data
 - De-duplicates repeated assistant messages by message ID
 
-## Requirements
-
-OpenCode 2.0 or newer (V2 plugin API).
-
 ## Install
+
+Requires OpenCode 2.0 or newer.
 
 ```sh
 opencode plugin add @streetturtle/opencode-session-tokens
 ```
+
+Project-only: add `"@streetturtle/opencode-session-tokens"` to `plugins` in `opencode.jsonc`.

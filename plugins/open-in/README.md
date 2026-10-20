@@ -10,11 +10,15 @@ OpenCode sidebar plugin with one-click IDE launch buttons for the current sessio
 - Shows buttons for installed IDEs only (Zed, VS Code, Cursor)
 - Opens the active session directory directly in your IDE
 
-## Requirements
+## Platforms
 
-OpenCode 2.0 or newer (V2 plugin API).
+- **macOS**: detects installed apps and launches with `open -a` (Zed via its CLI).
+- **Linux and WSL**: detects the `zed`, `code` and `cursor` CLI launchers on your `PATH` (`which`) and runs them with the session directory. On WSL, `code` and `cursor` resolve to the Windows shims, so the folder opens in your Windows IDE.
+- **Native Windows**: not supported yet.
 
 ## Install
+
+Requires OpenCode 2.0 or newer.
 
 ```sh
 opencode plugin add @streetturtle/opencode-open-in
@@ -26,5 +30,4 @@ Open any session and click the IDE button in the sidebar.
 
 ## Notes
 
-- macOS only (`open -a`)
-- If a button is missing, the IDE was not detected as installed
+- If a button is missing, the IDE was not detected as installed (on Linux/WSL, make sure its CLI is on `PATH`; in VS Code run "Shell Command: Install 'code' command in PATH" if needed)

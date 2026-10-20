@@ -3,7 +3,7 @@ import { createSignal, For, Show } from "solid-js"
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { TextAttributes } from "@opentui/core"
 import { platform } from "node:os"
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { isAbsolute, resolve } from "node:path"
 import { existsSync } from "node:fs"
 
@@ -11,7 +11,7 @@ type IDEAction = {
   label: string
   /** macOS bundle name for applications that launch through `open -a`. */
   appName?: string
-  /** Executable on PATH for terminal applications. */
+  /** Executable on PATH. macOS uses it only when there is no appName; Linux/WSL always does. */
   command?: string
   /** Launch in a tmux window instead of the current terminal. */
   tmux?: boolean
@@ -24,9 +24,9 @@ type Resolver = (sessionID: string) => Promise<string | undefined>
 const TMUX_WINDOW_NAME = "opencode-nvim"
 
 const IDES: IDEAction[] = [
-  { label: "Zed", appName: "Zed", command: "zed" },
-  { label: "VS Code", appName: "Visual Studio Code" },
-  { label: "Cursor", appName: "Cursor" },
+  { label: "Zed", command: "zed" },
+  { label: "VS Code", appName: "Visual Studio Code", command: "code" },
+  { label: "Cursor", appName: "Cursor", command: "cursor" },
   { label: "Neovim", command: "nvim", tmux: true },
 ]
 
@@ -57,14 +57,34 @@ function resolveCLIPath(command: string): string | undefined {
   return candidates.find((candidate) => existsSync(candidate))
 }
 
+function cliCommand(ide: IDEAction): string | undefined {
+  return platform() === "darwin" && ide.appName ? undefined : ide.command
+}
+
+function launchWithCLI(cli: string, targetPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cli, [targetPath], { detached: true, stdio: "ignore" })
+    child.once("error", reject)
+    child.once("spawn", () => {
+      child.unref()
+      resolve()
+    })
+  })
+}
+
+function isSupportedPlatform(): boolean {
+  return platform() === "darwin" || platform() === "linux"
+}
+
 function checkIDEInstalled(ide: IDEAction): boolean {
   // A tmux target is only usable when this process really runs inside tmux.
   if (ide.tmux) {
     return Boolean(process.env.TMUX) && Boolean(resolveCLIPath("tmux"))
   }
 
-  if (ide.command) {
-    return Boolean(resolveCLIPath(ide.command))
+  const command = cliCommand(ide)
+  if (command) {
+    return Boolean(resolveCLIPath(command))
   }
 
   if (!ide.appName) return false
@@ -84,9 +104,8 @@ function refreshIDEAvailability() {
   }
 
   for (const ide of IDES) {
-    // `open -a` is macOS-only, so GUI editors stay hidden elsewhere while tmux
-    // targets keep working.
-    if (platform() !== "darwin" && !ide.command) {
+    // Tmux targets work wherever tmux does; every other editor needs macOS or Linux/WSL.
+    if (!ide.tmux && !isSupportedPlatform()) {
       getAvailabilitySignal(availabilityKey(ide))[1]("missing")
       continue
     }
@@ -136,8 +155,8 @@ async function openInIDE(
   setBusy(true)
 
   try {
-    if (platform() !== "darwin" && !ide.command) {
-      throw new Error("Open In currently supports macOS only")
+    if (!ide.tmux && !isSupportedPlatform()) {
+      throw new Error("Open In supports macOS and Linux/WSL only")
     }
 
     const [availability, setAvailability] = getAvailabilitySignal(availabilityKey(ide))
@@ -154,13 +173,21 @@ async function openInIDE(
       throw new Error("Could not resolve session directory")
     }
 
+    if (!ide.tmux && platform() !== "darwin") {
+      const cli = ide.command ? resolveCLIPath(ide.command) : undefined
+      if (!cli) throw new Error(`${ide.label} CLI not found on PATH`)
+      await launchWithCLI(cli, targetPath)
+      return
+    }
+
     const launchResult = (() => {
       if (ide.tmux) {
         return launchInTmux(targetPath)
       }
 
-      if (ide.command) {
-        const cli = resolveCLIPath(ide.command)
+      const command = cliCommand(ide)
+      if (command) {
+        const cli = resolveCLIPath(command)
         if (!cli) throw new Error(`${ide.label} executable not found`)
         return spawnSync(cli, [targetPath], { stdio: "ignore" })
       }
