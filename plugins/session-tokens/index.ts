@@ -1,6 +1,10 @@
 /** @jsxImportSource @opentui/solid */
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
+import { createMemo, createSignal, For, onMount, Show } from "solid-js"
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
+import { createSectionIO } from "../_lib/section"
+
+let sectionOpen: () => boolean
+let toggleSection: () => void
 
 const MAX_MODEL_ROWS = 10
 const INT_FORMATTER = new Intl.NumberFormat("en-US")
@@ -14,27 +18,15 @@ function safeNumber(value: unknown): number {
   return 0
 }
 
-function hasNumeric(value: unknown): boolean {
-  if (typeof value === "number") return Number.isFinite(value) && value > 0
-  if (typeof value === "string" && value !== "") {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) && parsed > 0
-  }
-  return false
-}
-
 function readCost(source: any): { value: number; present: boolean } {
-  if (hasNumeric(source?.cost)) {
-    return {
-      value: safeNumber(source.cost),
-      present: true,
-    }
+  const candidates = [source?.cost, source?.info?.cost, source?.usage?.cost, source?.metrics?.cost]
+
+  for (const candidate of candidates) {
+    const value = safeNumber(candidate)
+    if (value > 0) return { value, present: true }
   }
 
-  return {
-    value: 0,
-    present: false,
-  }
+  return { value: 0, present: false }
 }
 
 function spentTokenCount(tokens: any): number {
@@ -67,17 +59,17 @@ function shortModelLabel(label: string): string {
   return `${label.slice(0, 25)}...`
 }
 
-function View(props: { sessionID: string }) {
+function View(props: { sessionID: string; open: () => boolean; toggle: () => void }) {
   const context = usePlugin()
-  const [open, setOpen] = createSignal(false)
   const theme = () => context.theme
 
-  createEffect(() => {
+  onMount(() => {
+    void context.data.session.sync(props.sessionID)
     void context.data.session.message.sync(props.sessionID)
   })
 
-  const messages = createMemo(() => context.data.session.message.list(props.sessionID) as any[])
-  const session = createMemo(() => context.data.session.get(props.sessionID))
+  const messages = () => (context.data.session.message.list(props.sessionID) ?? []) as any[]
+  const session = () => context.data.session.get(props.sessionID) as any
 
   const data = createMemo(() => {
     const tokenTotals = new Map<string, number>()
@@ -91,8 +83,10 @@ function View(props: { sessionID: string }) {
       if (message?.type !== "assistant") continue
 
       const messageID = message?.id
-      if (typeof messageID === "string" && seen.has(messageID)) continue
-      if (typeof messageID === "string") seen.add(messageID)
+      if (typeof messageID === "string") {
+        if (seen.has(messageID)) continue
+        seen.add(messageID)
+      }
 
       const tokenCount = spentTokenCount(message?.tokens)
       const messageCost = readCost(message)
@@ -142,10 +136,8 @@ function View(props: { sessionID: string }) {
   return (
     <Show when={show()}>
       <box>
-        <box flexDirection="row" gap={1} onMouseDown={() => canExpand() && setOpen((x) => !x)}>
-          <Show when={canExpand()}>
-            <text fg={theme().text.base}>{open() ? "▼" : "▶"}</text>
-          </Show>
+        <box flexDirection="row" gap={1} onMouseDown={() => canExpand() && props.toggle()}>
+          <text fg={theme().text.base}>{props.open() ? "▼" : "▶"}</text>
           <text fg={theme().text.base}>
             <b>Session Tokens</b>
           </text>
@@ -155,7 +147,7 @@ function View(props: { sessionID: string }) {
           </Show>
         </box>
 
-        <Show when={canExpand() && open()}>
+        <Show when={canExpand() && props.open()}>
           <For each={data().perModel.slice(0, MAX_MODEL_ROWS)}>{(row) => (
             <box flexDirection="row">
               <text fg={theme().text.muted}>{shortModelLabel(row.model)}</text>
@@ -175,9 +167,20 @@ function View(props: { sessionID: string }) {
 export default Plugin.define({
   id: "streetturtle.session-tokens",
   setup(context) {
-    context.ui.slot({
+    const io = createSectionIO(context, "session-tokens")
+    const [open, setOpen] = createSignal(io.initial)
+    sectionOpen = open
+    toggleSection = () => {
+      const next = !open()
+      setOpen(next)
+      io.save(next)
+    }
+
+    return context.ui.slot({
       append: "sidebar.content",
-      render: (input) => <View sessionID={input.sessionID} />,
+      render: (slot) => (
+        <View sessionID={slot.sessionID} open={sectionOpen} toggle={toggleSection} />
+      ),
     })
   },
 })

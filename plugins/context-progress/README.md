@@ -19,6 +19,9 @@ Compact context usage widget for the OpenCode sidebar.
   - warning: `>= 70%`
   - danger: `>= 90%`
 
+The widget is appended to the built-in `sidebar.content` slot, so it never
+replaces sidebar content contributed by OpenCode or other plugins.
+
 ## Install
 
 Requires OpenCode 2.0 or newer.

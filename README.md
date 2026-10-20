@@ -22,6 +22,11 @@ opencode plugin add @streetturtle/opencode-current-prompt
 
 or from OpenCode, press <kbd>ctrl</kbd>+<kbd>p</kbd> -> "Install Plugin" -> "@streetturtle/opencode-open-in"
 
+Every plugin appends to the built-in `sidebar.content` slot, so sidebar content
+contributed by OpenCode itself (including the MCP section) is left untouched.
+Plugins that append to the same slot render in the order they are listed in the
+`plugins` array of your `opencode.json`.
+
 ## Plugin Pack
 
 - [`@streetturtle/opencode-open-in`](./plugins/open-in) - quick buttons to open the current session folder in Zed, VS Code, or Cursor.
